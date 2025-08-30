@@ -26,8 +26,7 @@ from transformers.utils import ModelOutput, logging
 from eaglevl.model.eagle2_5.configuration_eagle2_5_vl import Eagle2_5_VLConfig
 from eaglevl.model.c_radio.radio_model import RADIOModel, RADIOConfig
 from eaglevl.sp_utils import  (get_pg_manager, split_for_sequence_parallel, ring_split_for_sequence_parallel,
-                                gather_from_sequence_parallel, ring_gather_for_sequence_parallel,
-                                LowMemLogitProjCrossEnt)
+                                gather_from_sequence_parallel, ring_gather_for_sequence_parallel)
 
 from eaglevl.train.liger_loss_weight_ops import LigerFusedLinearCrossEntropyLoss
 from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, replace_return_docstrings
@@ -306,12 +305,13 @@ class Eagle2_5_VLForConditionalGeneration(Eagle2_5_VLPreTrainedModel, Generation
         RING_ZIGZAG = False
         assert attention_mask is not None, f'attention_mask is None, input_ids.shape={input_ids.shape}, sub_sample_lengths={sub_sample_lengths}, image_flags={image_flags}'
 
+
         if sub_sample_lengths is None:
             sub_sample_lengths = self.get_sub_sample_lengths(input_ids)
             
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        input_embeds = self.language_model.get_input_embeddings()(input_ids).clone()
+        input_embeds = self.language_model.get_input_embeddings()(input_ids)
         num_images = pixel_values.shape[0]
         
         # scatter the pixel_values to the sequence parallel group
@@ -387,6 +387,7 @@ class Eagle2_5_VLForConditionalGeneration(Eagle2_5_VLPreTrainedModel, Generation
         # not every token needs to be computed by lm_head, we only compute the tokens that have valid labels
         hidden_states = outputs.last_hidden_state
         lm_head_weight = self.language_model.lm_head.weight
+
         
         hidden_dim = hidden_states.shape[-1]
         if get_pg_manager() is None:

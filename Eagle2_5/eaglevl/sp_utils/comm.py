@@ -6,6 +6,46 @@ import torch.distributed as dist
 from torch import Tensor
 
 
+
+
+
+# def _all_to_all(
+#     x: torch.Tensor,
+#     world_size: int,
+#     group: dist.ProcessGroup,
+#     scatter_dim: int,
+#     gather_dim: int,
+# ):
+#     assert scatter_dim != gather_dim, "scatter_dim 与 gather_dim 必须不同"
+#     nd = x.dim()
+#     scatter_dim = scatter_dim % nd
+#     gather_dim  = gather_dim  % nd
+
+#     # 1) 把“要散开的维度”和“要拼接的维度”搬到前两维： [Da, Db, ...rest]
+#     x2 = x.movedim([scatter_dim, gather_dim], [0, 1]).contiguous()
+#     Da, Db = x2.shape[:2]
+#     rest_shape = x2.shape[2:]
+#     assert Da % world_size == 0, f"沿 scatter_dim 的长度 {Da} 需要能整除 world_size={world_size}"
+#     S = Da // world_size
+
+#     # 2) 把除前两维外合并成一维，便于一次通信
+#     x3   = x2.reshape(Da, Db, -1)                 # [Da, Db, R]
+#     y3   = torch.empty_like(x3)
+
+#     # 3) all_to_all_single：按第0维切分/拼接（等价于 all_to_all 的列表版） 
+#     dist.all_to_all_single(y3, x3, group=group)   # 与把 x3 按第0维 chunk 再 gather 等价
+
+#     # 4) 把“peer 轴”从第0维交换到第1维（实现沿 gather_dim 的拼接）
+#     #    先把第0维改成 [W, S]，再把 [W] 合并到 Db 上： Db' = W * Db
+#     y4 = y3.view(world_size, S, Db, -1)           # [W, S, Db, R]
+#     y5 = y4.permute(1, 0, 2, 3)                   # [S, W, Db, R]
+#     y6 = y5.reshape(S, world_size * Db, *rest_shape)
+
+#     # 5) 把前两维放回原来的 scatter_dim / gather_dim 位置
+#     out = y6.movedim([0, 1], [scatter_dim, gather_dim]).contiguous()
+#     return out
+
+
 def _all_to_all(
     input: Tensor,
     world_size: int,
@@ -19,7 +59,8 @@ def _all_to_all(
     ]
     output_list = [torch.empty_like(input_list[0]) for _ in range(world_size)]
     dist.all_to_all(output_list, input_list, group=group)
-    return torch.cat(output_list, dim=gather_dim).contiguous()
+    res = torch.cat(output_list, dim=gather_dim).contiguous()
+    return res
 
 
 class _AllToAll(torch.autograd.Function):

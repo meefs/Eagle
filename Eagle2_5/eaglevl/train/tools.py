@@ -72,36 +72,80 @@ class SaveCheckpointCallback(TrainerCallback):
         return control
 
 
-
+import os
 import torch
 from transformers import TrainerCallback
 import torch.distributed as dist
-from pynvml import nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo, nvmlShutdown, NVML_TEMPERATURE_GPU, nvmlDeviceGetPowerUsage, nvmlDeviceGetTemperature
+from pynvml import (
+    nvmlInit, nvmlDeviceGetHandleByIndex, nvmlDeviceGetMemoryInfo,
+    nvmlDeviceGetComputeRunningProcesses_v2, nvmlShutdown,
+    NVML_TEMPERATURE_GPU, nvmlDeviceGetPowerUsage, nvmlDeviceGetTemperature
+)
+
+MB = 1024 ** 2
 
 class MemoryLoggerCallback(TrainerCallback):
     def __init__(self):
-        nvmlInit()  
-        self.rank = dist.get_rank() if torch.distributed.is_initialized() else 0
+        nvmlInit()
+        self.rank = dist.get_rank() if dist.is_initialized() else 0
         self.device_id = torch.cuda.current_device()
+        self.pid = os.getpid()
+
+        # 建议：训练开始时清零峰值统计
+        torch.cuda.reset_peak_memory_stats(self.device_id)
 
     def log_gpu_info(self, step):
-        
+        # 先同步，避免异步内核导致读数偏小
+        torch.cuda.synchronize(self.device_id)
+
+        # -------- PyTorch 口径（本进程）--------
+        alloc = torch.cuda.memory_allocated(self.device_id)            # 张量实际占用
+        reserv = torch.cuda.memory_reserved(self.device_id)            # 预留（缓存）
+        max_alloc = torch.cuda.max_memory_allocated(self.device_id)    # 运行以来峰值
+        max_reserv = torch.cuda.max_memory_reserved(self.device_id)
+
+        # -------- CUDA 驱动口径（当前设备可用/总量）--------
+        free_bytes, total_bytes = torch.cuda.mem_get_info(self.device_id)
+        used_cuda = total_bytes - free_bytes
+
+        # -------- NVML 口径（设备整卡 + 本进程）--------
         handle = nvmlDeviceGetHandleByIndex(self.device_id)
-        mem_info = nvmlDeviceGetMemoryInfo(handle)
+        mem_info = nvmlDeviceGetMemoryInfo(handle)  # 整卡 used/free/total（所有进程合计）
+
+        # 本进程在 NVML 里的用量（可能因权限/MIG返回不可用）
+        proc_used = None
+        try:
+            procs = nvmlDeviceGetComputeRunningProcesses_v2(handle)
+            for p in procs:
+                if getattr(p, "pid", None) == self.pid:
+                    proc_used = getattr(p, "usedGpuMemory", None)  # bytes
+                    break
+        except Exception:
+            pass
+
         temperature = nvmlDeviceGetTemperature(handle, NVML_TEMPERATURE_GPU)
-        power_usage = nvmlDeviceGetPowerUsage(handle) / 1000
-       
-        print(f"[Step {step} | Rank {self.rank} / GPU {self.device_id}] "
-              f"Memory: {mem_info.used / 1024**2:.2f} MB, "
-              f"Temperature: {temperature}°C, "
-              f"Power: {power_usage:.2f} W, ")
+        power_w = nvmlDeviceGetPowerUsage(handle) / 1000.0
+
+        print(
+            f"[Step {step} | Rank {self.rank} / GPU {self.device_id}] "
+            f"PT alloc={alloc/MB:.2f}MB (peak {max_alloc/MB:.2f}MB), "
+            f"PT reserved={reserv/MB:.2f}MB (peak {max_reserv/MB:.2f}MB), "
+            f"CUDA used={used_cuda/MB:.2f}MB / total={total_bytes/MB:.0f}MB, "
+            f"NVML device used={mem_info.used/MB:.2f}MB"
+            + (f", NVML proc used={proc_used/MB:.2f}MB" if proc_used else "")
+            + f", Temp={temperature}°C, Power={power_w:.1f}W"
+        )
 
     def on_step_end(self, args, state, control, **kwargs):
+        # 只在少数 rank 打印，避免刷屏
         if self.rank % 32 == 0:
             self.log_gpu_info(state.global_step)
 
     def __del__(self):
-        nvmlShutdown() 
+        try:
+            nvmlShutdown()
+        except Exception:
+            pass
 
 
 

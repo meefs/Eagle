@@ -115,8 +115,12 @@ class LazySupervisedDataset(Dataset):
             )
 
         # divide raw_data into N ranks, and only keep the data for current rank
-        self.rank = dist.get_rank()
-        self.world_size = dist.get_world_size()
+        if get_pg_manager() is not None:
+            self.rank = get_pg_manager().data_parallel_rank
+            self.world_size = get_pg_manager().data_parallel_world_size
+        else:
+            self.rank = dist.get_rank()
+            self.world_size = dist.get_world_size()
         self.raw_data = self.raw_data.select(
             indices=range(self.rank, len(self.raw_data), self.world_size)
         )

@@ -87,7 +87,7 @@ def ring_split_for_sequence_parallel(inputs, ulysses_group: dist.ProcessGroup, r
     
     ring_rank = dist.get_rank(ring_group)
     ring_world_size = dist.get_world_size(ring_group)
-    print("ring:", ring_world_size, ring_rank)
+    # print("ring:", ring_world_size, ring_rank)
     # print("shape:", inputs.shape, len(sub_sample_lengths))
     sub_sample_lengths = torch.tensor(sub_sample_lengths[0], device=inputs.device, dtype=torch.int32)
     assert torch.all(sub_sample_lengths % ring_world_size == 0)

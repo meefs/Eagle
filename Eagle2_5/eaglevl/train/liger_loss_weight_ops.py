@@ -7,7 +7,7 @@ import torch
 from typing import Callable
 import importlib
 import operator
-from pkg_resources import parse_version as Version
+from packaging.version import Version
 import functools
 import triton
 import triton.language as tl

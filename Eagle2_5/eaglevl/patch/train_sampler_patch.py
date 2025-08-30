@@ -234,6 +234,7 @@ def weighted_shuffle_np(elements, weights):
 
 def get_length_grouped_indices_for_online_packing(lengths, batch_size, world_size, generator=None, merge=True, accumulation_steps=1, megabatch_size=4000, model_max_length=8192, weights=None, default_rank=None):
     # We need to use torch for the random part as a distributed sampler will set the random seed for torch.
+    assert default_rank is None, f"default_rank is not None: {default_rank}"
     rank = torch.distributed.get_rank() if default_rank is None else default_rank
     device = torch.cuda.current_device()
 
@@ -269,9 +270,11 @@ def get_length_grouped_indices_for_online_packing(lengths, batch_size, world_siz
         pad_megabatches = random.choices(local_megabatches, k=pad_length)
         local_megabatches.extend(pad_megabatches)
     
+    
     ret_list = [Packer([-1]) for _ in range(len(local_megabatches)*world_size)]
     local_idx = 0
     random.shuffle(local_megabatches)
+
     for i in range(rank * iter_batch_size, len(ret_list), world_size*iter_batch_size):
         for j in range(i, i + iter_batch_size):
             if local_idx < len(local_megabatches):

@@ -144,8 +144,13 @@ PROCESS_GROUP_MANAGER = None
 
 
 def get_llm_num_heads(model):
-    # now check qwen2
-    return model.language_model.config.num_attention_heads
+    # now check qwen series model
+    try:
+        num_heads = model.language_model.config.num_attention_heads
+    except:
+        print("please check how to get num_heads from model", flush=True)
+        raise ValueError("model.language_model.config.num_attention_heads not found")
+    return num_heads
 
 def set_pg_manager(model, sequence_parallel_size, ring_sequence_parallel_size=1):
     """
